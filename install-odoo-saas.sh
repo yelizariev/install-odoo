@@ -6,14 +6,15 @@
 
  # Actions
  export INSTALL_DEPENDENCIES=${INSTALL_DEPENDENCIES:-"no"}
- export INIT_POSTGRESQL=${INIT_POSTGRESQL:-"no"}
- export INIT_BACKUPS=${INIT_BACKUPS:-"no"}
- export INIT_NGINX=${INIT_NGINX:-"no"}
+ export INIT_POSTGRESQL=${INIT_POSTGRESQL:-"no"} # yes | no | docker-container
+ export INIT_BACKUPS=${INIT_BACKUPS:-"no"} # yes | no | docker-host
+ export INIT_NGINX=${INIT_NGINX:-"no"} # yes | no | docker-host
  export INIT_START_SCRIPTS=${INIT_START_SCRIPTS:-"no"} # yes | no | docker-host
  export INIT_SAAS_TOOLS=${INIT_SAAS_TOOLS:-"no"} # no | list of parameters to saas.py script
  export INIT_ODOO_CONFIG=${INIT_ODOO_CONFIG:-"no"} # no | yes | docker-container
  export INIT_USER=${INIT_USER:-"no"}
  export INIT_DIRS=${INIT_DIRS:-"no"}
+ export ADD_AUTOINSTALL_MODULES=${ADD_AUTOINSTALL_MODULES:-""} # "['module1','module2']"
  export GIT_PULL=${GIT_PULL:-"no"}
  export UPDATE_ADDONS_PATH=${UPDATE_ADDONS_PATH:-"no"}
  export CLEAN=${CLEAN:-"no"}
@@ -31,20 +32,24 @@
  export CLONE_OCA=${CLONE_OCA:-"no"}
  export CLONE_ODOO=${CLONE_ODOO:-"no"}
 
+ ## Docker Names
+ export ODOO_DOCKER=${ODOO_DOCKER:-"odoo"}
+ export DB_ODOO_DOCKER=${DB_ODOO_DOCKER:-"db-odoo"}
+
  ## E-Mail
  export EMAIL_SERVER=${EMAIL_SERVER:-stmp.example.com}
  export EMAIL_USER=${EMAIL_USER:-mail@example.com}
  export EMAIL_PASS=${EMAIL_PASS:-GiveMeYourPassBaby}
 
  ## PostgreSQL
- export DB_PASS=${DB_PASS:-`< /dev/urandom tr -dc A-Za-z0-9 | head -c${1:-32};echo;`}
+ export DB_PASS=${DB_PASS:-`< /dev/urandom tr -dc A-Za-z0-9 | head -c16;echo;`}
 
  ## Odoo
  export ODOO_DOMAIN=${ODOO_DOMAIN:-odoo.example.com}
  export ODOO_DATABASE=${ODOO_DATABASE:-odoo.example.com}
  export ODOO_USER=${ODOO_USER:-odoo}
- export ODOO_BRANCH=${ODOO_BRANCH:-9.0}
- export ODOO_MASTER_PASS=${ODOO_MASTER_PASS:-`< /dev/urandom tr -dc A-Za-z0-9 | head -c${1:-12};echo;`}
+ export ODOO_BRANCH=${ODOO_BRANCH:-10.0}
+ export ODOO_MASTER_PASS=${ODOO_MASTER_PASS:-`< /dev/urandom tr -dc A-Za-z0-9 | head -c16;echo;`}
 
  ## Nginx
  export NGINX_SSL=${NGINX_SSL:-"no"}
@@ -58,6 +63,7 @@
  #### Detect type of system manager
  export SYSTEM=''
  pidof systemd && export SYSTEM='systemd'
+ pidof systemd-journald && export SYSTEM='systemd'
  [[ -z $SYSTEM ]] && whereis upstart | grep -q 'upstart: /' && export SYSTEM='upstart'
  [[ -z $SYSTEM ]] &&  export SYSTEM='supervisor'
  echo "SYSTEM=$SYSTEM"
@@ -89,9 +95,8 @@
 
  #### DOWNLOADS...
 
- if [[ "$INIT_NGINX" == "yes" ]] || [[ "$INIT_START_SCRIPTS" != "no" ]] || [[ "$INIT_ODOO_CONFIG" != "no" ]]
+ if [[ "$INIT_NGINX" != "no" ]] || [[ "$INIT_START_SCRIPTS" != "no" ]] || [[ "$INIT_ODOO_CONFIG" != "no" ]]
  then
-     apt-get install -y emacs23-nox || apt-get install -y emacs24-nox
      # moreutils is installed for sponge util
      apt-get install -y moreutils
  fi
@@ -100,15 +105,14 @@
 
  if [[ "$INSTALL_DEPENDENCIES" == "yes" ]]
  then
-     apt-get install -y python-pip
+     curl --silent https://bootstrap.pypa.io/get-pip.py | python 
      apt-get install -y --no-install-recommends \
              ca-certificates \
              curl \
              node-less \
              node-clean-css \
              python-pyinotify \
-             python-renderpm \
-             python-support
+             python-renderpm
 
      ## wkhtmltopdf
      WKHTMLTOPDF_INSTALLED="no"
@@ -152,9 +156,16 @@
          rm -rf /var/lib/apt/lists/* wkhtmltox.deb
      fi
 
-     apt-get install -y adduser node-less node-clean-css postgresql-client python python-dateutil python-decorator python-docutils python-feedparser python-imaging python-jinja2 python-ldap python-libxslt1 python-lxml python-mako python-mock python-openid python-passlib python-psutil python-psycopg2 python-pybabel python-pychart python-pydot python-pyparsing python-pypdf python-reportlab python-requests python-suds python-tz python-vatnumber python-vobject python-werkzeug python-xlwt python-yaml
+     apt-get install -y adduser node-less node-clean-css python python-dateutil python-decorator python-docutils python-feedparser python-imaging python-jinja2 python-ldap python-libxslt1 python-lxml python-mako python-mock python-openid python-passlib python-psutil python-psycopg2 python-babel python-pychart python-pydot python-pyparsing python-pypdf python-reportlab python-requests python-suds python-tz python-vatnumber python-vobject python-werkzeug python-xlwt python-yaml
      apt-get install -y python-gevent python-simplejson
 
+     if [[ "$ODOO_BRANCH" == "8.0" ]]
+     then
+         apt-get install -y python-unittest2
+     fi
+
+
+     pip install werkzeug --upgrade
      pip install psycogreen
      # requirements.txt
      #apt-get install -y postgresql-server-dev-all python-dev  build-essential libxml2-dev libxslt1-dev 
@@ -200,12 +211,17 @@
      pip install requests --upgrade
  fi
 
- if [[ "$INIT_POSTGRESQL" == "yes" ]]
+ if [[ "$INIT_POSTGRESQL" != "no" ]]
  then
     ### PostgreSQL
-     POSTGRES_PACKAGES="postgresql postgresql-contrib"
+     if [[ "$INIT_POSTGRESQL" == "docker-container" ]]
+     then
+         POSTGRES_PACKAGES="postgresql-client-9.5"
+     else
+         POSTGRES_PACKAGES="postgresql-9.5 postgresql-contrib-9.5 postgresql-client-9.5"
+     fi
      apt-get install $POSTGRES_PACKAGES -y || \
-         wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
+         curl --silent https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
          apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 7FCC7D46ACCC4CF8 && \
          echo 'deb http://apt.postgresql.org/pub/repos/apt/ trusty-pgdg main' >> /etc/apt/sources.list.d/pgdg.list && \
          apt-get update && \
@@ -244,8 +260,6 @@
      cd $ODOO_SOURCE_DIR
      ## delete matches="..." at /web/database/manager
      sed -i 's/matches="[^"]*"//g' addons/web/static/src/xml/base.xml
-     ## disable im_odoo_support
-     sed -i "s/'auto_install': True/'auto_install': False/" addons/im_odoo_support/__openerp__.py
  fi
 
  mkdir -p $ADDONS_DIR
@@ -275,11 +289,12 @@
 
  if [[ "$CLONE_IT_PROJECTS_LLC" == "yes" ]]
  then
-     REPOS=( "${REPOS[@]}" "https://github.com/iledarn/e-commerce.git iledarn/e-commerce")
+     REPOS=( "${REPOS[@]}" "https://github.com/it-projects-llc/e-commerce.git it-projects-llc/e-commerce")
      REPOS=( "${REPOS[@]}" "https://github.com/it-projects-llc/pos-addons.git it-projects-llc/pos-addons")
      REPOS=( "${REPOS[@]}" "https://github.com/it-projects-llc/access-addons.git it-projects-llc/access-addons")
      REPOS=( "${REPOS[@]}" "https://github.com/it-projects-llc/website-addons.git it-projects-llc/website-addons")
      REPOS=( "${REPOS[@]}" "https://github.com/it-projects-llc/misc-addons.git it-projects-llc/misc-addons")
+     REPOS=( "${REPOS[@]}" "https://github.com/it-projects-llc/mail-addons.git it-projects-llc/mail-addons")
      REPOS=( "${REPOS[@]}" "https://github.com/it-projects-llc/odoo-saas-tools.git it-projects-llc/odoo-saas-tools")
  fi
 
@@ -292,7 +307,7 @@
  do
      eval "git clone --depth=1 -b ${ODOO_BRANCH} $r" || echo "Cannot clone: git clone -b ${ODOO_BRANCH} $r"
  done
- chown -R ${ODOO_USER}:${ODOO_USER} $ADDONS_DIR
+ chown -R ${ODOO_USER}:${ODOO_USER} $ADDONS_DIR || true
 
 
  #from http://stackoverflow.com/questions/2914220/bash-templating-how-to-build-configuration-files-from-templates-with-bash
@@ -328,9 +343,29 @@
      #  -> pos/
      #  -> ...
      ADDONS_PATH=`ls -d1 $ADDONS_DIR/*/* | tr '\n' ','`
-     ADDONS_PATH=`echo $ODOO_SOURCE_DIR/openerp/addons,$ODOO_SOURCE_DIR/addons,$ADDONS_PATH | sed "s,//,/,g" | sed "s,/,\\\\\/,g" `
+     ADDONS_PATH=`echo $ODOO_SOURCE_DIR/odoo/addons,$ODOO_SOURCE_DIR/addons,$ADDONS_PATH | sed "s,//,/,g" | sed "s,/,\\\\\/,g" `
      sed -ibak "s/addons_path.*/addons_path = $ADDONS_PATH/" $OPENERP_SERVER
 
+ fi
+
+ if [[ -n "$ADD_AUTOINSTALL_MODULES" ]]
+ then
+     DB_PY=$ODOO_SOURCE_DIR/odoo/service/db.py
+     # add base code
+     grep AUTOINSTALL_MODULES $DB_PY || \
+         sed -i "s;\
+            if lang:;\
+            AUTOINSTALL_MODULES = []\n\
+            modules = env['ir.module.module'].search([('name', 'in', AUTOINSTALL_MODULES)])\n\
+            modules.button_immediate_install()\n\
+            if lang:;" \
+             $DB_PY
+     # update module list
+     sed -i "s;\
+            AUTOINSTALL_MODULES = \[\];\
+            AUTOINSTALL_MODULES = []\n\
+            AUTOINSTALL_MODULES += $ADD_AUTOINSTALL_MODULES;" \
+         $DB_PY
  fi
 
  if [[ "$GIT_PULL" == "yes" ]]
@@ -344,12 +379,15 @@
  fi
 
 
- if [[ "$INIT_NGINX" == "yes" ]]
+ if [[ "$INIT_NGINX" != "no" ]]
  then
      #### NGINX
      CONFIGS="configs"
-     #/etc/init.d/apache2 stop
-     apt-get remove apache2 -y && \
+
+     /etc/init.d/apache2 stop && \
+         apt-get remove apache2 -y || \
+             echo "apache2 was not installed"
+
      #wget --quiet -O - http://nginx.org/keys/nginx_signing.key | apt-key add - &&\
      #echo 'deb http://nginx.org/packages/ubuntu/ trusty nginx' >> /etc/apt/sources.list.d/nginx.list &&\
      #echo 'deb-src http://nginx.org/packages/ubuntu/ trusty nginx' >> /etc/apt/sources.list.d/nginx.list &&\
@@ -376,12 +414,12 @@
      #mkdir /etc/nginx/sites-enabled/ -p
      cd /etc/nginx/sites-enabled/
      rm default || true
-     ln -s ../sites-available/odoo.conf odoo.conf
+     ln -s ../sites-available/odoo.conf odoo.conf || true
 
 
      if [[ "$NGINX_SSL" == "yes" ]]
      then
-         ln -s ../sites-available/odoo_ssl.conf odoo_ssl.conf
+         ln -s ../sites-available/odoo_ssl.conf odoo_ssl.conf || true
      fi
 
      #cd /etc/nginx/ && \
@@ -395,7 +433,7 @@
  #### Odoo Saas Tool
  if [[ "$INIT_SAAS_TOOLS" != "no" ]]        ###################################### IF
  then
-     sudo su - ${ODOO_USER} -s /bin/bash -c  "python $ADDONS_DIR/it-projects-llc/odoo-saas-tools/saas.py $INIT_SAAS_TOOLS"
+     su --preserve-environment - ${ODOO_USER} -s /bin/bash -c  "python $ADDONS_DIR/it-projects-llc/odoo-saas-tools/saas.py $INIT_SAAS_TOOLS"
  fi
 
  #### START CONTROL
@@ -421,7 +459,7 @@
 
      cd /lib/systemd/system/
 
-     for DAEMON in $DAEMON_LIST
+     for DAEMON in ${DAEMON_LIST[@]}
      do
          cp $INSTALL_ODOO_DIR/${CONFIGS}/${DAEMON}.service ${DAEMON}.service
          eval "${PERL_UPDATE_ENV} < ${DAEMON}.service" | sponge ${DAEMON}.service
@@ -435,7 +473,7 @@
      ### CONTROL SCRIPTS - upstart
 
      cd /etc/init/
-     for DAEMON in $DAEMON_LIST
+     for DAEMON in ${DAEMON_LIST[@]}
      do
          cp $INSTALL_ODOO_DIR/${CONFIGS}/${DAEMON}-init.conf ${DAEMON}.conf
          eval "${PERL_UPDATE_ENV} < ${DAEMON}.conf" | sponge ${DAEMON}.conf
@@ -448,7 +486,7 @@
      ### CONTROL SCRIPTS - supervisor
 
      cd /etc/supervisor/conf.d/
-     for DAEMON in $DAEMON_LIST
+     for DAEMON in ${DAEMON_LIST[@]}
      do
          cp $INSTALL_ODOO_DIR/${CONFIGS}/${DAEMON}-supervisor.conf ${DAEMON}.conf
          eval "${PERL_UPDATE_ENV} < ${DAEMON}.conf" | sponge ${DAEMON}.conf
@@ -465,16 +503,27 @@
  #echo "Do not forget to set server parameter report.url = 0.0.0.0:8069"
 
  #### ODOO DB BACKUP
- if [[ "$INIT_BACKUPS" == "yes" ]]             ###################################### IF
+ if [[ "$INIT_BACKUPS" != "no" ]]             ###################################### IF
  then
-     mkdir -p /opt/${ODOO_USER}/backups/
-     chown ${ODOO_USER}:${ODOO_USER} /opt/${ODOO_USER}/backups/
-     cd /usr/local/bin/
-     cp $INSTALL_ODOO_DIR/odoo-backup.py odoo-backup.py
-     chmod +x odoo-backup.py
+     if [[ "$INIT_BACKUPS" == "yes" ]]
+     then
+         mkdir -p ${BACKUPS_DIR}
+         chown ${ODOO_USER}:${ODOO_USER} ${BACKUPS_DIR}
+         cd /usr/local/bin/
+         cp $INSTALL_ODOO_DIR/odoo-backup.py odoo-backup.py
+         chmod +x odoo-backup.py
+     fi
+
+     if [[ "$INIT_BACKUPS" == "yes" ]]
+     then
+         BACKUP_EXEC="${ODOO_USER} odoo-backup.py"
+     elif [[ "$INIT_BACKUPS" == "docker-host" ]]
+     then
+         BACKUP_EXEC="root docker exec -u root -i -t ${ODOO_DOCKER} /usr/local/bin/odoo-backup.py -d ${ODOO_DATABASE} -c ${OPENERP_SERVER} -p ${BACKUPS_DIR}"
+     fi
      echo "### check url for undestanding time parameters: https://github.com/xolox/python-rotate-backups" >> /etc/crontab
-     echo -e "#6 6\t* * *\t${ODOO_USER} odoo-backup.py -d ${ODOO_DATABASE} -p /opt/${ODOO_USER}/backups/ --no-save-filestore --daily 8 --weekly 0 --monthly 0 --yearly 0" >> /etc/crontab
-     echo -e "#4 4\t* * 7\t${ODOO_USER} odoo-backup.py -d ${ODOO_DATABASE} -p /opt/${ODOO_USER}/backups/" >> /etc/crontab
+     echo -e "#6 6\t* * *\t${BACKUP_EXEC} --no-save-filestore --daily 8 --weekly 0 --monthly 0 --yearly 0" >> /etc/crontab
+     echo -e "#4 4\t* * 7\t${BACKUP_EXEC}" >> /etc/crontab
      ## to test run:
      # sudo su - ${ODOO_USER} -s /bin/bash -c  "odoo-backup.py -d ${ODOO_DATABASE} -p /opt/${ODOO_USER}/backups/"
      # e.g.

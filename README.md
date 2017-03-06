@@ -1,20 +1,25 @@
 # install-odoo
 
-Install developement / production [odoo](https://www.odoo.com/) from [git](https://github.com/odoo/odoo) with / without using [docker](https://www.docker.com/).
+Install developement or production 
+[odoo](https://www.odoo.com/) from [git](https://github.com/odoo/odoo)
+with or without using [docker](https://www.docker.com/), 
+with or without using [Amazon RDS](https://aws.amazon.com/rds/), with additional improvements: 
 
-## Preparation
+* Attachments are stored in postgres large objects by default
+* Completely debranded system
+* Save sessions to postgres. It simplifies multi-instance deployment
 
-    apt-get update | grep "Hit http" -C 10000 && echo "Some packages are not loaded"
+# Basic usage
+
+## Getting script
+
+    apt-get update | grep "Hit http\|Ign http" -C 10000 && echo "There are possible failures on fetching. Try apt-get update again"
+    
     apt-get install git -y
     git clone https://github.com/it-projects-llc/install-odoo.git
     cd install-odoo
-
-    # if you got error after apt-get update, you probably need to update source list:
-    sed -i 's/\/\/.*\.ec2\.//g' /etc/apt/sources.list
-    apt-get update | grep "Hit http" -C 10000 && echo "Some packages are not loaded"
     
-
-## Basic usage
+## Running script
 
     # run script with parameters you need
     # (list of all parameters with default values can be found at install-odoo-saas.sh)
@@ -30,6 +35,7 @@ Install developement / production [odoo](https://www.odoo.com/) from [git](https
     CLONE_IT_PROJECTS_LLC=yes \
     CLONE_OCA=yes \
     UPDATE_ADDONS_PATH=yes \
+    ADD_AUTOINSTALL_MODULES="['ir_attachment_force_storage']"
     /bin/bash -x install-odoo-saas.sh
 
 ## After installation
@@ -45,7 +51,7 @@ Install developement / production [odoo](https://www.odoo.com/) from [git](https
     tail -f -n 100 /var/log/odoo/odoo-server.log
     
     # start from console (for ODOO_USER=odoo):
-    sudo su - odoo -s /bin/bash -c  "/usr/local/src/odoo-source/openerp-server -c /etc/openerp-server.conf"
+    sudo su - odoo -s /bin/bash -c  "/usr/local/src/odoo-source/odoo-bin -c /etc/openerp-server.conf"
     
     # psql (use name of your database)
     sudo -u odoo psql DATABASE
@@ -55,7 +61,9 @@ Install developement / production [odoo](https://www.odoo.com/) from [git](https
 
 
 
-## Installation in Docker
+# Installation in Docker
+
+## Install Docker engine
 
     # Install docker
     # see https://docs.docker.com/engine/installation/
@@ -65,8 +73,11 @@ Install developement / production [odoo](https://www.odoo.com/) from [git](https
     # Ubuntu 12.04
     echo "deb https://apt.dockerproject.org/repo ubuntu-precise main" > /etc/apt/sources.list.d/docker.list
 
-    # Ubunto 14.04
+    # Ubuntu 14.04
     echo "deb https://apt.dockerproject.org/repo ubuntu-trusty main" > /etc/apt/sources.list.d/docker.list
+
+    # Ubuntu 16.04
+    echo "deb https://apt.dockerproject.org/repo ubuntu-xenial main" > /etc/apt/sources.list.d/docker.list
 
     apt-get update
 
@@ -74,18 +85,27 @@ Install developement / production [odoo](https://www.odoo.com/) from [git](https
 
     apt-get install -y docker-engine
 
+## Create postgres container 
+
     # create postgres container
     docker run -d -e POSTGRES_USER=odoo -e POSTGRES_PASSWORD=odoo --name db-odoo postgres:9.5
 
+## Create odoo container
 
 Simplest way to create odoo container is as following:
 
     # run (create) container
     docker run \
     -p 8069:8069 \
+    -p 8072:8072 \
     --name odoo \
-    --link db-odoo:db
+    --link db-odoo:db \
     -t itprojectsllc/install-odoo
+
+Additionally, you can specify following environment variables:
+
+* ``-e ODOO_MASTER_PASS=123abcd`` -- specify master password (one, you will use on Database Manager page). If this variable is not specified, system will generate new password on each start.
+* ``-e RESET_ADMIN_PASSWORDS_ON_STARTUP=yes`` -- will reset admin password at all databases to ``$ODOO_MASTER_PASS`` (manual or generated value)
 
 For more specific installation check following links:
 
@@ -113,31 +133,46 @@ Finish docker installation:
     INIT_START_SCRIPTS=docker-host \
     install-odoo-saas.sh
 
-## SaaS Tools
+# SaaS Tools
 
-To prepare [saas tools](https://github.com/it-projects-llc/odoo-saas-tools) specify params for ``saas.py`` script, e.g.:
+To prepare [saas tools](https://github.com/it-projects-llc/odoo-saas-tools) do as on examples below.
+
+Example for base installation
 
     INIT_SAAS_TOOLS_VALUE="\
     --portal-create \
     --server-create \
     --plan-create \
-    --odoo-script=/usr/local/src/odoo-source/openerp-server \
+    --odoo-script=/usr/local/src/odoo-source/odoo-bin \
     --odoo-config=/etc/openerp-server.conf \
-    --admin-password=${ODOO_MASTER_PASS} \
+    --admin-password='${ODOO_MASTER_PASS}' \
     --portal-db-name=${ODOO_DOMAIN} \
     --server-db-name=server-1.${ODOO_DOMAIN} \
     --plan-template-db-name=template-1.${ODOO_DOMAIN} \
     --plan-clients=demo-%i.${ODOO_DOMAIN} \
+    --odoo-xmlrpc-port=8069 \
     "
-
-Then run script.
-
-    # for base installation
     INIT_SAAS_TOOLS=$INIT_SAAS_TOOLS_VALUE bash -x install-odoo-saas.sh
 
-    # for docker installation:
-    docker exec INIT_SAAS_TOOLS=$INIT_SAAS_TOOLS_VALUE /bin/bash /install-odoo-saas.sh
+Example for docker installation
+
+    INIT_SAAS_TOOLS_VALUE="\
+    --portal-create \
+    --server-create \
+    --plan-create \
+    --odoo-script=/mnt/odoo-source/odoo-bin \
+    --odoo-config=/mnt/config/odoo-server.conf \
+    --admin-password='${ODOO_MASTER_PASS}' \
+    --portal-db-name=${ODOO_DOMAIN} \
+    --server-db-name=server-1.${ODOO_DOMAIN} \
+    --plan-template-db-name=template-1.${ODOO_DOMAIN} \
+    --plan-clients=demo-%i.${ODOO_DOMAIN} \
+    --odoo-xmlrpc-port=8869 \
+    "
+
+    docker exec -u root -i -t odoo /bin/bash -c "export INIT_SAAS_TOOLS='$INIT_SAAS_TOOLS_VALUE'; bash /install-odoo-saas.sh"
     
+After that you need to edit config file and update db_filter value to *^%h$*.
 
 # Contributors
 
